@@ -1,7 +1,6 @@
 import bpy
 import glob
 
-file_loc_root = 'C:/PythonProject/MyProject/utils/df-generation/models/'
 file_loc_root = '<ROOT>'
 kmz_files = glob.glob(file_loc_root + '*.kmz')
 kmz_files.sort()
