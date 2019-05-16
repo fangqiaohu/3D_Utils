@@ -1,22 +1,39 @@
-"""Render a *.obj mesh with blender.
-For simplicity, we put the target at the origin of the
-world coordinates and rotate the camera around the target.
-"""
 import bpy
 import numpy as np
 import time
 import glob
 import os
 
-file_loc_root = '<ROOT>'
-filepath = '<FILEPATH>'
+fn_read_list = glob.glob(<'PATH'>)
+fn_read = fn_read_list[0]
 
 # delete current model
 bpy.ops.object.select_all(action='SELECT')
 bpy.ops.object.delete(use_global=False)
 
+# renew
+def reset_blend():
+    # bpy.ops.wm.read_factory_settings()
+
+    for scene in bpy.data.scenes:
+        for obj in scene.objects:
+            scene.objects.unlink(obj)
+
+    # only worry about data in the startup scene
+    for bpy_data_iter in (
+            bpy.data.objects,
+            bpy.data.meshes,
+            bpy.data.lamps,
+            bpy.data.cameras,
+    ):
+        for id_data in bpy_data_iter:
+            bpy_data_iter.remove(id_data)
+
+
+reset_blend()
+
 # import obj file
-imported_object = bpy.ops.import_scene.obj(filepath=filepath)
+imported_object = bpy.ops.import_scene.obj(filepath=fn_read)
 obj_object = bpy.context.object
 # print('Imported name: ', obj_object.name)
 
@@ -27,12 +44,23 @@ bpy.ops.object.camera_add()
 
 # import a point light
 bpy.ops.object.lamp_add(type='POINT')
+lamp = bpy.data.lamps['Point']
+lamp.energy = 3
+lamp.distance = 100
+
 
 # render: camera looks at object center, the distance from object center to camera center is fixed,
 # theta and phi are under Spherical Coordinate System (wiki)
 # for theta in np.arange(np.pi/3, np.pi/2, np.pi/12):
-theta = 5 * np.pi / 12
-for phi in np.arange(0, 2 * np.pi, np.pi/6):
+
+theta = 75
+# from d to rad
+theta = theta * np.pi / 180
+
+for phi in np.arange(0, 360, 30):
+
+    # from d to rad
+    phi = phi * np.pi / 180
 
     # R: how far is camera center to object center
     R = 8
@@ -69,11 +97,11 @@ for phi in np.arange(0, 2 * np.pi, np.pi/6):
     bpy.data.scenes['Scene'].render.resolution_percentage = 100
 
     # file name
-    obj_name = os.path.basename(filepath).split('.')[0]
     t = int(round(theta / np.pi * 180))
     p = int(round(phi / np.pi * 180))
-    # save_fn = os.path.join(file_loc_root + 'image', '%s_c%03d%03d.jpg' % (obj_name, t, p))
-    save_fn = file_loc_root+'image/' + '%s/' % obj_name + '%s_c%03d%03d.png' % (obj_name, t, p)
+    obj_name = os.path.basename(fn_read).split('.')[0]
+    # fn_write = file_loc_root + 'image/' + '%s/' % obj_name + '%s_%03d%03d.png' % (obj_name, t, p)
+    fn_write = fn_read.split('\\')[0].replace('obj_bridge', 'image') + '/%s_%03d%03d.png' % (obj_name, t, p)
 
     scene = bpy.data.scenes["Scene"]
     scene.render.image_settings.file_format = 'PNG'
@@ -83,7 +111,7 @@ for phi in np.arange(0, 2 * np.pi, np.pi/6):
     bpy.context.scene.camera = bpy.data.objects['Camera']
 
     # render op1
-    bpy.data.scenes['Scene'].render.filepath = save_fn
+    bpy.data.scenes['Scene'].render.filepath = fn_write
     bpy.data.scenes['Scene'].render.use_placeholder = True
     bpy.data.scenes['Scene'].render.alpha_mode = 'TRANSPARENT'
     bpy.data.scenes['Scene'].render.image_settings.color_mode = 'RGBA'
