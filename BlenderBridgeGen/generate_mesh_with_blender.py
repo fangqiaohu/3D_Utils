@@ -203,16 +203,19 @@ def get_keypoints(center, dim, num_block):
     return verts
 
 
-def draw_truss(center, dim, num_block, case=1, sym_plane=None, color=None):
+def draw_truss(center, dim, num_block, case=1, vertical=0, slant_dn=0, sym_plane=None, width=0.01, height=0.01, color=None):
     """
     :param center: triple, center of the bbox of girder
     :param dim: triple, size of the bbox of girder
     :param num_block: int, number of blocks
-    :param case: {0, 1, 2, 3}, cases for slant lines
+    :param case: {0, 1, 2, 3}, cases for slant lines sym type
+    :param vertical: {0, 1}, whether has vertical lines
+    :param slant_dn: {0, 1}, cases for slant directions
     :param sym_plane: float, for case==2, determine the sym_plane_1 on "x axis"
+    :param width, height: ...
     :param color: triple, (R, G, B)
     """
-    if case not in [0, 1, 2, 3]:
+    if case not in [0, 1, 2, 3] or vertical not in [0, 1] or slant_dn not in [0, 1]:
         raise ValueError
 
     # get keypoints
@@ -238,7 +241,7 @@ def draw_truss(center, dim, num_block, case=1, sym_plane=None, color=None):
     lines = np.concatenate((lines, rep_lines(line, num_block+1)))
 
     # vertical lines that need n+1 repeats, optional
-    if 1:
+    if vertical==1:
         line_vertical = np.array([[0, 2],
                                   [1, 3]])
         lines = np.concatenate((lines, rep_lines(line_vertical, num_block+1)))
@@ -256,7 +259,7 @@ def draw_truss(center, dim, num_block, case=1, sym_plane=None, color=None):
                              [3, 5]])
 
     # if exchange two slant lines
-    if 1:
+    if slant_dn == 1:
         line_slant_1, line_slant_2 = line_slant_2, line_slant_1
         line_slant_3, line_slant_4 = line_slant_4, line_slant_3
 
@@ -296,7 +299,7 @@ def draw_truss(center, dim, num_block, case=1, sym_plane=None, color=None):
     # append slant lines to all lines
     lines = np.concatenate((lines, lines_slant))
     for line in lines:
-        draw_cube(p1=verts[line[0]], p2=verts[line[1]], width=0.01, height=0.01)
+        draw_cube(p1=verts[line[0]], p2=verts[line[1]], width=width, height=height)
 
     # draw road
     draw_bbox(center=(center[0], center[1], center[2]+0.6*dim[2]), dim=(dim[0], dim[1], 0.05*dim[2]))
@@ -477,7 +480,7 @@ def draw_cable_road(num_tower, center_girder, dim_girder, blanks=(0.2, 0.2, 0.2)
     blank_1, blank_2, blank_3 = blanks
     blank_3 = blank_3 / 2  # for easier calculation
     # front left up keypoint on girder
-    vert_flu = np.array([-dim_girder[0]/2, -dim_girder[1]/2, dim_girder[2]/2])
+    vert_flu = center_girder + np.array([-dim_girder[0]/2, -dim_girder[1]/2, dim_girder[2]/2])
 
     if num_tower not in [1, 2, 3] or num_side not in [1, 2, 3]:
         raise ValueError
@@ -599,7 +602,50 @@ def draw_cable_road(num_tower, center_girder, dim_girder, blanks=(0.2, 0.2, 0.2)
         draw_cube_2(p1, p2, radius=radius)
 
 
-def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, blank=1,
+def solve_parabola(x1, x2, x3, y1, y2, y3):
+    X = np.array([[x1 ** 2, x1, 1],
+                  [x2 ** 2, x2, 1],
+                  [x3 ** 2, x3, 1]])
+    Y = np.array([[y1], [y2], [y3]])
+    a, b, c = np.linalg.inv(X).dot(Y)
+    return a, b, c
+
+
+def _draw_sus_cable(p1, p2, p3, kps_1, radius):
+    """
+    Draw suspension cables.
+    :param p1: left point on parabola
+    :param p2: right
+    :param p3: middle
+    :param kps_1: keypoints on truss
+    :param radius: ...
+    """
+    # find keypoints on main cable (kps_2)
+    # get interpolating points, the parabola line is divided to 16 segments
+    kps_2_x = np.linspace(p1[0], p2[0], num=16)
+    a1, b1, c1 = solve_parabola(p1[0], p2[0], p3[0], p1[1], p2[1], p3[1])
+    kps_2_y = a1 * kps_2_x ** 2 + b1 * kps_2_x + c1
+    a2, b2, c2 = solve_parabola(p1[0], p2[0], p3[0], p1[2], p2[2], p3[2])
+    kps_2_z = a2 * kps_2_x ** 2 + b2 * kps_2_x + c2
+    kps_2 = np.concatenate((kps_2_x, kps_2_y, kps_2_z)).reshape((3, -1)).T
+
+    # find keypoints on main cable wrt truss
+    kps_3_x = kps_1[:, 0]
+    kps_3_y = a1 * kps_3_x ** 2 + b1 * kps_3_x + c1
+    kps_3_z = a2 * kps_3_x ** 2 + b2 * kps_3_x + c2
+    kps_3 = np.concatenate((kps_3_x, kps_3_y, kps_3_z)).reshape((3, -1)).T
+
+    # draw main cable
+    for i in range(kps_2.shape[0] - 1):
+        p1, p2 = kps_2[i], kps_2[i + 1]
+        draw_cube_2(p1, p2, radius=2*radius)
+    # draw cable
+    for i in range(kps_1.shape[0]):
+        p1, p2 = kps_3[i], kps_1[i]
+        draw_cube_2(p1, p2, radius=radius)
+
+
+def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, two_block=0,
                          shift_from_tower_center=None, center_tower=None, radius=0.005, color=None):
     """
     Draw suspension cables. Only suitable for num_tower={2, 3} and num_side=2.
@@ -607,7 +653,7 @@ def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, blank=
     :param center_girder: triple, center of the bbox of girder
     :param dim_girder: triple, size of the bbox of girder
     :param num_block: int, number of blocks
-    :param blank: int, number of blanks, control the endpoint to cable
+    :param two_block: {0, 1}, if draw cable every two block
     :param shift_from_tower_center: 2*3 float, label for the connection of tower and cable
     :param center_tower: float, for the center of the first tower (if 2 or 3)
     :param radius: radius of cable
@@ -620,38 +666,6 @@ def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, blank=
     verts = get_keypoints(center_girder, dim_girder, num_block)
     verts_front = verts[2::4]  # keypoints on truss in the front side
 
-    def solve_parabola(x1, x2, x3, y1, y2, y3):
-        X = np.array([[x1 ** 2, x1, 1],
-                      [x2 ** 2, x2, 1],
-                      [x3 ** 2, x3, 1]])
-        Y = np.array([[y1], [y2], [y3]])
-        a, b, c = np.linalg.inv(X).dot(Y)
-        return a, b, c
-
-    def _draw(p1, p2, p3, kps_1, radius):
-        # get interpolating points, the parabola line is divided to 16 segments
-        kps_2_x = np.linspace(p1[0], p2[0], num=16)
-        a1, b1, c1 = solve_parabola(p1[0], p2[0], p3[0], p1[1], p2[1], p3[1])
-        kps_2_y = a1 * kps_2_x ** 2 + b1 * kps_2_x + c1
-        a2, b2, c2 = solve_parabola(p1[0], p2[0], p3[0], p1[2], p2[2], p3[2])
-        kps_2_z = a2 * kps_2_x ** 2 + b2 * kps_2_x + c2
-        kps_2 = np.concatenate((kps_2_x, kps_2_y, kps_2_z)).reshape((3, -1)).T
-
-        # find keypoints on main cable wrt truss
-        kps_3_x = kps_1[:, 0]
-        kps_3_y = a1 * kps_3_x ** 2 + b1 * kps_3_x + c1
-        kps_3_z = a2 * kps_3_x ** 2 + b2 * kps_3_x + c2
-        kps_3 = np.concatenate((kps_3_x, kps_3_y, kps_3_z)).reshape((3, -1)).T
-
-        # draw main cable
-        for i in range(kps_2.shape[0] - 1):
-            p1, p2 = kps_2[i], kps_2[i + 1]
-            draw_cube_2(p1, p2, radius=2*radius)
-        # draw cable
-        for i in range(kps_1.shape[0]):
-            p1, p2 = kps_3[i], kps_1[i]
-            draw_cube_2(p1, p2, radius=radius)
-
     if num_tower == 2:
 
         '''center part'''
@@ -659,10 +673,9 @@ def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, blank=
         which_block = int(abs(center_tower[0] - (center_girder[0] - dim_girder[0] / 2)) / (dim_girder[0] / num_block)) + 1
         kps_1 = verts_front[which_block:num_block-which_block+1]
         # if every 2 block
-        if 1:
+        if two_block==1:
             kps_1 = kps_1[::2]
 
-        # find keypoints on main cable (kps_2)
         # three points on the suspension parabola line
         p1 = np.array([center_tower[0] - shift_from_tower_center[0, 0],
                        center_tower[1] + shift_from_tower_center[0, 1],
@@ -672,16 +685,16 @@ def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, blank=
         p3 = np.array([center_girder[0], center_girder[1]-dim_girder[1]/2, center_girder[2]+3*dim_girder[2]/2])
 
         # draw
-        _draw(p1, p2, p3, kps_1, radius)
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
         p1[1], p2[1], p3[1], kps_1[:, 1] = -p1[1], -p2[1], -p3[1], -kps_1[:, 1]
-        _draw(p1, p2, p3, kps_1, radius)
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
 
         '''left part'''
         # find keypoints on truss (kps_1)
         which_block = int(abs(center_tower[0] - (center_girder[0] - dim_girder[0] / 2)) / (dim_girder[0] / num_block))
         kps_1 = verts_front[0:which_block+1]
         # if every 2 block
-        if 1:
+        if two_block==1:
             kps_1 = kps_1[::2]
 
         # find keypoints on main cable (kps_2)
@@ -694,13 +707,90 @@ def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, blank=
         p3 = np.array([0.5*p1[0] + 0.5*p2[0], 0.5*p1[1] + 0.5*p2[1], 0.4*p1[2] + 0.6*p2[2]])
 
         # draw
-        _draw(p1, p2, p3, kps_1, radius)
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
         p1[1], p2[1], p3[1], kps_1[:, 1] = -p1[1], -p2[1], -p3[1], -kps_1[:, 1]
-        _draw(p1, p2, p3, kps_1, radius)
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
         p1[0], p2[0], p3[0], kps_1[:, 0] = -p1[0], -p2[0], -p3[0], -kps_1[:, 0]
-        _draw(p1, p2, p3, kps_1, radius)
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
         p1[1], p2[1], p3[1], kps_1[:, 1] = -p1[1], -p2[1], -p3[1], -kps_1[:, 1]
-        _draw(p1, p2, p3, kps_1, radius)
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
+
+    else:
+        # TODO: num_tower=3
+        pass
+
+
+def draw_sus_cable_road(num_tower, center_girder, dim_girder, interval=0.1,
+                     shift_from_tower_center=None, center_tower=None, radius=0.005, color=None):
+    """
+    :param num_tower: int in {1, 2, 3}
+    :param center_girder: triple, center of the bbox of girder
+    :param dim_girder: triple, size of the bbox of girder
+    :param blanks: float triple, distance of blanks, control the keypoints of cables
+            (endpoint to cable, cable to tower, cable to cable)
+    :param interval: float, an **approximate** interval for two adjacent cables
+    :param num_side: int in {1, 2, 3}, number of cable sides
+    :param shift_from_tower_center: 2*3 float, label for the connection of tower and cable
+    :param center_tower: float, for the center of the first tower (if 2 or 3)
+    :param radius: radius of cable
+    :param color: triple, (R, G, B)
+    """
+    if num_tower not in [2, 3]:
+        raise ValueError
+
+    # front left up keypoint on girder
+    vert_flu = center_girder + np.array([-dim_girder[0]/2, -dim_girder[1]/2, dim_girder[2]/2])
+
+    if num_tower==2:
+        # control the number of cables
+        num_cable_1 = int(round(abs(2 * center_tower[0]) / interval))  # center part
+        num_cable_2 = int(round((dim_girder[0]/2-abs(center_tower[0])) / interval))  # left part
+
+        '''center part'''
+        # find keypoints on main cable (kps_2)
+        # three points on the suspension parabola line
+        p1 = np.array([center_tower[0] - shift_from_tower_center[0, 0],
+                       center_tower[1] + shift_from_tower_center[0, 1],
+                       center_tower[2] + shift_from_tower_center[0, 2]])
+        p2 = p1.copy()
+        p2[0] *= -1
+        p3 = np.array([center_girder[0], center_girder[1]-dim_girder[1]/2, center_girder[2]+3*dim_girder[2]/2])
+
+        # find keypoints on road (kps_1)
+        kps_1_x = np.linspace(p1[0], p2[0], num=num_cable_1)
+        kps_1_y = np.repeat(vert_flu[1], repeats=num_cable_1)
+        kps_1_z = np.repeat(vert_flu[2], repeats=num_cable_1)
+        kps_1 = np.concatenate((kps_1_x, kps_1_y, kps_1_z)).reshape((3, -1)).T
+
+        # draw
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
+        p1[1], p2[1], p3[1], kps_1[:, 1] = -p1[1], -p2[1], -p3[1], -kps_1[:, 1]
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
+
+        '''left part'''
+        # find keypoints on main cable (kps_2)
+        # three points on the suspension parabola line
+        p1 = np.array([center_tower[0] + shift_from_tower_center[0, 0],
+                       center_tower[1] + shift_from_tower_center[0, 1],
+                       center_tower[2] + shift_from_tower_center[0, 2]])
+        p2 = vert_flu
+        # TODO: adjust p3
+        p3 = np.array([0.5*p1[0] + 0.5*p2[0], 0.5*p1[1] + 0.5*p2[1], 0.4*p1[2] + 0.6*p2[2]])
+
+        # find keypoints on road (kps_1)
+        kps_1_x = np.linspace(p1[0], p2[0], num=num_cable_2)
+        kps_1_y = np.repeat(vert_flu[1], repeats=num_cable_2)
+        kps_1_z = np.repeat(vert_flu[2], repeats=num_cable_2)
+        kps_1 = np.concatenate((kps_1_x, kps_1_y, kps_1_z)).reshape((3, -1)).T
+
+        # draw
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
+        p1[1], p2[1], p3[1], kps_1[:, 1] = -p1[1], -p2[1], -p3[1], -kps_1[:, 1]
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
+        p1[0], p2[0], p3[0], kps_1[:, 0] = -p1[0], -p2[0], -p3[0], -kps_1[:, 0]
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
+        p1[1], p2[1], p3[1], kps_1[:, 1] = -p1[1], -p2[1], -p3[1], -kps_1[:, 1]
+        _draw_sus_cable(p1, p2, p3, kps_1, radius)
 
     else:
         # TODO: num_tower=3
@@ -709,29 +799,32 @@ def draw_sus_cable_truss(num_tower, center_girder, dim_girder, num_block, blank=
 
 if __name__ == '__main__':
 
-    '''parameters'''
-
     # clear console window
     os.system('cls')
 
     # reset
     reset_blend()
 
+    '''files'''
     # where is the *.obj file
     file_loc_root = 'C:/PythonProject/MyProject/utils/mesh-generation/obj_tower'
     # file_loc_root = '/Users/hufangqiao/Nutstore Files/my_nutstore/my_code/mesh-generation/obj_tower'
 
     '''tower'''
-    num_tower = 2
     files_tower = glob.glob(os.path.join(file_loc_root, '*.obj'))
     files_tower.sort()
 
-    fn_tower = np.random.choice(files_tower)
+    '''all parameters'''
+    # section
+    width = 0.01
+    height = 0.01
+    radius = 0.005
 
+    # tower
+    fn_tower = np.random.choice(files_tower)
+    num_tower = 2
     center_tower = np.array([-2.5, 0, 0])
     color_tower = np.array([0.65, 0.65, 0.55])
-
-    '''label on tower'''
     # read label dict from txt file
     f = open(os.path.join(file_loc_root,'tower_label_dict.txt'), 'r')
     string = f.read()
@@ -742,40 +835,115 @@ if __name__ == '__main__':
     # where to draw cable, shift from center_tower
     shift_from_tower_center = label_tower_current[2:4]
 
-    '''girder'''
+    # girder--truss
     num_block = 72
     center_girder = label_tower_current[0]
     dim_girder = label_tower_current[1]
+    case = 1
+    vertical = 0
+    slant_dn = 1
     dim_girder[0] = random(7, 8)
     color_girder = np.array([[0.8, 0.15, 0.15],
                              [0.65, 0.65, 0.65]])[np.random.randint(0, 2)] * random(0.85, 1)
+
+    # girder--road
 
     '''draw'''
     # draw tower
     draw_tower(fn_tower=fn_tower, num_tower=num_tower, center=center_tower, color=color_tower)
 
-    # draw truss
-    draw_truss(center=center_girder, dim=dim_girder, num_block=num_block, case=0, sym_plane=-2.5, color=color_girder)
+    # # draw truss
+    # draw_truss(center=center_girder, dim=dim_girder, num_block=num_block, case=0, sym_plane=-2.5, color=color_girder)
 
     # # draw truss cable
     # draw_cable_truss(num_tower=num_tower, center_girder=center_girder, dim_girder=dim_girder,
     #                  num_block=num_block, num_side=3, center_tower=center_tower,
     #                  shift_from_tower_center=shift_from_tower_center, radius=0.005, color=None)
 
-    # draw truss suspension cable
-    draw_sus_cable_truss(num_tower=2, center_girder=center_girder, dim_girder=dim_girder, num_block=num_block,
-                         blank=1, shift_from_tower_center=shift_from_tower_center,
-                         center_tower=center_tower, radius=0.005, color=None)
+    # # draw truss suspension cable
+    # draw_sus_cable_truss(num_tower=2, center_girder=center_girder, dim_girder=dim_girder, num_block=num_block,
+    #                      shift_from_tower_center=shift_from_tower_center,
+    #                      center_tower=center_tower, radius=0.005, color=None)
 
-    # # draw road
-    # # move along z axis
-    # center_girder[2] += dim_girder[2] * random(-0.2, 0.4)
-    # dim_girder[2] *= random(0.1, 0.3)
-    # draw_road(center_girder=center_girder, dim_girder=dim_girder, color=color_girder)
-    #
+    # draw road
+    # move along z axis
+    center_girder[2] += dim_girder[2] * random(-0.2, 0.4)
+    dim_girder[2] *= random(0.1, 0.3)
+    draw_road(center_girder=center_girder, dim_girder=dim_girder, color=color_girder)
+
     # # draw road cable
     # draw_cable_road(num_tower=num_tower, center_girder=center_girder, dim_girder=dim_girder,
     #                 blanks=(0.2, 0.2, 0.2), interval=0.1, num_side=2,
     #                 shift_from_tower_center=shift_from_tower_center, center_tower=center_tower,
     #                 radius=0.005, color=None)
+
+    # draw road suspension cable
+    draw_sus_cable_road(num_tower=num_tower, center_girder=center_girder, dim_girder=dim_girder, interval=0.1,
+                    shift_from_tower_center=shift_from_tower_center, center_tower=center_tower, radius=0.005, color=None)
+
+    '''export'''
+    fn_export = os.path.join(file_loc_root.replace('obj_tower', 'obj_bridge'), 'bridge_%s.obj' % str(1234).zfill(4))
+    bpy.ops.export_scene.obj(filepath=fn_export,
+                             check_existing=True,
+                             axis_forward='-Z',
+                             axis_up='Y',
+                             filter_glob="*.obj;*.mtl",
+                             use_selection=False,
+                             use_animation=False,
+                             use_mesh_modifiers=True,
+                             use_edges=False,
+                             use_smooth_groups=False,
+                             use_smooth_groups_bitflags=False,
+                             use_normals=True,
+                             use_uvs=False,
+                             use_materials=True,
+                             use_triangles=True,
+                             use_nurbs=False,
+                             use_vertex_groups=True,
+                             use_blen_objects=True,
+                             group_by_object=True,
+                             group_by_material=False,
+                             keep_vertex_order=True,
+                             global_scale=1,
+                             path_mode='AUTO')
+
+    # '''write label'''
+    # # get dim_tower
+    # f = open(fn_tower, 'r')
+    # data = f.read()
+    # f.close()
+    # data1 = data.split('\n')
+    # data1 = [i for i in data1 if i != '']
+    # verts = []
+    # for line in data1:
+    #     if line.split()[0] == 'v':
+    #         verts.append(line.split()[1:4])
+    # verts = np.array(verts, dtype=float)
+    # dim_tower = np.max(verts, axis=0) - np.min(verts, axis=0)
+    # # exchange yz
+    # dim_tower[[1,2]] = dim_tower[[2,1]]
+    #
+    # # read all data in bridge_xxx.obj
+    # f = open(fn_export, 'r')
+    # data = f.read()
+    # f.close()
+    #
+    # # write labels
+    # f = open(fn_export, 'w')
+    # f.write("# label\n")
+    # f.write("# center_girder=%s\n" % center_girder)
+    # f.write("# dim_girder=%s\n" % dim_girder)
+    # f.write("# n_block=%s\n" % n_block)
+    # f.write("# box_width,box_height=%s,%s\n" % (box_width, box_height))
+    # f.write("# center_tower=%s\n" % center_tower)
+    # f.write("# dim_tower=%s\n" % dim_tower)
+    # f.write("# line_start_1=%s\n" % line_start_1)
+    # f.write("# line_end_1=%s\n" % line_end_1)
+    # f.write("# line_start_2=%s\n" % line_start_2)
+    # f.write("# line_end_2=%s\n" % line_end_2)
+    # f.write("# cable_radius=%s\n" % cable_radius)
+    #
+    # # write all data in bridge_xxx.obj
+    # f.write(data)
+    # f.close()
 
